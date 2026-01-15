@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Корзина • BonusDostavka</title>
+    <style>
+        body {font-family: Arial; margin:40px; background:#f8f9fa;}
+        .cart-item {background:white; padding:20px; margin:15px 0; border-radius:16px; box-shadow:0 4px 15px rgba(0,0,0,0.1); display:flex; align-items:center;}
+        img {width:100px; height:100px; object-fit:cover; border-radius:12px; margin-right:20px;}
+        .qty {display:flex; align-items:center; gap:10px; font-size:18px;}
+        button {padding:10px 20px; border:none; border-radius:50px; color:white; font-weight:bold;}
+        .plus {background:#28a745;}
+        .minus {background:#ffc107; color:#333;}
+        .delete {background:#dc3545;}
+        .total {font-size:24px; font-weight:bold; color:#d32f2f; text-align:center; margin:30px 0;}
+    </style>
+</head>
+<body>
+<h1>Корзина</h1>
+<a href="/dashboard">На главную</a>
+
+{% if not items %}
+  <p style="text-align:center; padding:60px; background:white; border-radius:16px;">
+    Корзина пуста<br><br>
+    <a href="/dashboard" style="padding:15px 40px; background:#007bff; color:white; border-radius:50px; text-decoration:none;">Вернуться в магазин</a>
+  </p>
+{% else %}
+  {% for item in items %}
+    <div class="cart-item">
+      {% if item[3] %}
+        <img src="/{{ item[3] }}">
+      {% else %}
+        <div style="width:100px; height:100px; background:#eee; border-radius:12px;"></div>
+      {% endif %}
+      <div style="flex:1;">
+        <h3>{{ item[1] }}</h3>
+        <p>{{ item[4] or "Без описания" }}</p>
+        <div class="qty">
+          <form action="/update_cart" method="post" style="display:inline;">
+            <input type="hidden" name="prod_id" value="{{ item[0] }}">
+            <input type="hidden" name="action" value="minus">
+            <button type="submit" class="minus">–</button>
+          </form>
+          <span style="min-width:40px; text-align:center;">{{ item[5] }}</span>
+          <form action="/update_cart" method="post" style="display:inline;">
+            <input type="hidden" name="prod_id" value="{{ item[0] }}">
+            <input type="hidden" name="action" value="plus">
+            <button type="submit" class="plus">+</button>
+          </form>
+        </div>
+      </div>
+      <div style="text-align:right;">
+        <h3>{{ item[2] * item[5] }} ₽</h3>
+        <p style="color:#777;">{{ item[2] }} ₽ × {{ item[5] }}</p>
+        <form action="/update_cart" method="post">
+          <input type="hidden" name="prod_id" value="{{ item[0] }}">
+          <input type="hidden" name="action" value="delete">
+          <button type="submit" class="delete">Удалить</button>
+        </form>
+      </div>
+    </div>
+  {% endfor %}
+
+  <div class="total">
+    Итого: {{ total }} ₽
+  </div>
+
+  <div style="text-align:center;">
+    <a href="/dashboard" style="padding:15px 40px; background:#6c757d; color:white; border-radius:50px; text-decoration:none; margin:0 10px;">Продолжить покупки</a>
+    <button style="padding:15px 50px; background:#28a745; color:white; border-radius:50px; font-size:18px;">
+      Заказать
+    </button>
+  </div>
+{% endif %}
+</body>
+</html>

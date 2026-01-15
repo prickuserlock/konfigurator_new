@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Редактировать товар</title>
+    <style>
+        body {font-family: Arial; margin:40px; background:#f8f9fa;}
+        .form {max-width:600px; background:white; padding:30px; border-radius:16px; box-shadow:0 8px 25px rgba(0,0,0,0.1);}
+        input, textarea, select {width:100%; padding:12px; margin:8px 0; border-radius:12px; border:1px solid #ccc;}
+        button {padding:14px 32px; background:#28a745; color:white; border:none; border-radius:50px; font-weight:bold; cursor:pointer;}
+        .back {background:#6c757d; margin-left:10px;}
+    </style>
+</head>
+<body>
+<div class="form">
+    <h2>Редактировать товар</h2>
+
+    {% if prod[4] %}
+        <p><img src="/{{ prod[4] }}" style="max-width:200px; border-radius:12px;"></p>
+    {% else %}
+        <p><i>Фото отсутствует</i></p>
+    {% endif %}
+
+    <form action="/update_product" method="post" enctype="multipart/form-data">
+        <input type="hidden" name="prod_id" value="{{ prod[0] }}">
+
+        <p><strong>Название:</strong></p>
+        <input type="text" name="name" value="{{ prod[1] }}" required>
+
+        <p><strong>Цена (₽):</strong></p>
+        <input type="number" name="price" value="{{ prod[2] }}" required>
+
+        <p><strong>Категория:</strong></p>
+        <select name="cat_id" required>
+            {% for cat in categories %}
+                <option value="{{ cat[0] }}" {% if cat[0] == prod[5] %}selected{% endif %}>
+                    {{ cat[1] }}
+                </option>
+            {% endfor %}
+        </select>
+
+        <p><strong>Описание:</strong></p>
+        <textarea name="description">{{ prod[3] or "" }}</textarea>
+
+        <p><strong>Новое фото (если нужно заменить):</strong></p>
+        <input type="file" name="photo" accept="image/*">
+
+        <p>
+            <label>
+                <input type="checkbox" name="delete_photo"> Удалить текущее фото
+            </label>
+        </p>
+
+        <br>
+        <button type="submit">Сохранить изменения</button>
+        <a href="/dashboard" class="back" style="color:white; text-decoration:none; padding:14px 32px; display:inline-block;">Отмена</a>
+    </form>
+</div>
+</body>
+</html>

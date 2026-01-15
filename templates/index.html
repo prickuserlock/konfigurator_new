@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>BonusDostavkaBot</title>
+    <meta charset="utf-8">
+    <style>
+        body {font-family: Arial; text-align: center; padding: 50px; background: #f9f9f9;}
+        .box {max-width: 500px; margin: 0 auto; background: white; padding: 40px; border-radius: 20px; box-shadow: 0 10px 40px rgba(0,0,0,0.1);}
+        input, button {width: 100%; padding: 15px; margin: 10px 0; font-size: 18px; border-radius: 10px; border: 1px solid #ddd;}
+        button {background: #28a745; color: white; border: none; cursor: pointer;}
+        h1 {color: #28a745;}
+    </style>
+</head>
+<body>
+<div class="box">
+    <h1>BonusDostavkaBot</h1>
+    <p>Создай бонусного бота за 30 секунд</p>
+    <form action="/create" method="post">
+        <input name="token" placeholder="Токен от @BotFather" required>
+        <button type="submit">Запустить бота</button>
+    </form>
+</div>
+</body>
+</html>
