@@ -196,6 +196,12 @@ try:
     conn.commit()
 except sqlite3.OperationalError:
     pass
+try:
+    cur.execute("ALTER TABLE orders ADD COLUMN comment TEXT")
+    conn.commit()
+    print("Добавлено поле comment в orders")
+except sqlite3.OperationalError:
+    pass
 active_bots: dict[int, dict] = {}
 user_states: dict[int, dict] = {}
 async def launch_bot(bot_id: int, token: str, username: str):
@@ -713,23 +719,24 @@ async def launch_bot(bot_id: int, token: str, username: str):
     
         # Берём товары из корзины
         cur.execute("""SELECT c.prod_id, c.quantity, p.name, p.price
-                    FROM cart c JOIN products p ON c.prod_id = p.id
-                    WHERE c.bot_id=? AND c.user_id=?""", (bot_id, uid))
+                       FROM cart c JOIN products p ON c.prod_id = p.id
+                       WHERE c.bot_id=? AND c.user_id=?""", (bot_id, uid))
         items = cur.fetchall()
         if not items:
             await message.answer("Корзина пуста!")
             user_state.pop(uid, None)
             await show_main_menu(message)
             return
-    
-        total_sum = sum(quantity * price for _, quantity, _, price in items)
-    
+
+        # Считаем сумму здесь
+        total = sum(qty * price for _, qty, _, price in items)  # ← добавь эту строку!
+
         # Сохраняем в состояние
         if uid not in user_state:
             user_state[uid] = {}
         user_state[uid]["temp_order_items"] = items
         user_state[uid]["awaiting_delivery_type"] = True
-    
+
         # Клавиатура со способами
         buttons = []
         if allow_hall:
@@ -741,9 +748,10 @@ async def launch_bot(bot_id: int, token: str, username: str):
         if not buttons:
             await message.answer("Извините, заказы временно недоступны.")
             return
-    
+
         buttons.append([KeyboardButton(text="Отмена")])
         kb = ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+
         await message.answer(
             f"Общая сумма: {total} ₽\n\nВыберите способ получения:",
             reply_markup=kb
@@ -751,90 +759,135 @@ async def launch_bot(bot_id: int, token: str, username: str):
     @dp.message(lambda m: user_state.get(m.from_user.id, {}).get("type") == "cart_view" and m.text == "Заказать")
     async def order_from_cart(message: types.Message):
         await ask_delivery_type(message)
+
     @dp.message(lambda m: user_state.get(m.from_user.id, {}).get("awaiting_delivery_type"))
     async def process_delivery_type(message: types.Message):
         uid = message.from_user.id
-        choice = message.text
-    
+        choice = message.text.strip()
+
         if choice == "Отмена":
             user_state.pop(uid, None)
             await show_main_menu(message)
             return
-    
+
         if choice == "Доставка курьером":
             choice = "Доставка"
+
         if choice not in ["В зале", "Самовывоз", "Доставка"]:
-            await message.answer("Пожалуйста, выберите один из вариантов ниже:")
+            await message.answer("Пожалуйста, выберите один из вариантов ниже.")
             return
-    
-        # Сохраняем выбранный способ и товары в состояние
+
+        # Сохраняем тип доставки и переходим к комментарию
         temp_items = user_state.pop(uid, {}).get("temp_order_items", [])
         if not temp_items:
             await message.answer("Корзина пуста!")
             await show_main_menu(message)
             return
-    
-        # Переходим в состояние ожидания выбора времени
+
         user_state[uid] = {
             "delivery_type": choice,
             "temp_order_items": temp_items,
-            "awaiting_time": True # ← новое состояние!
+            "awaiting_comment": True  # ждём комментарий
         }
-    
-        # Показываем меню выбора времени
+
+        # Клавиатура для комментария
         kb = ReplyKeyboardMarkup(keyboard=[
-            [KeyboardButton(text="Как можно скорее")],
-            [KeyboardButton(text="Выбрать время")],
+            [KeyboardButton(text="Без комментария")],
             [KeyboardButton(text="Отмена")]
         ], resize_keyboard=True)
-    
-        await message.answer("Когда вам удобно получить заказ?", reply_markup=kb)
-        # Нажатие на товар в списке корзины → карточка
-        @dp.message(lambda m: user_state.get(m.from_user.id, {}).get("type") == "cart_view")
-        async def open_cart_product_card(message: types.Message):
-            uid = message.from_user.id
-            state = user_state[uid]
-            items = state["items"]
-            prod_name = message.text
-        
-            # Игнорируем системные кнопки
-            if prod_name in ["Заказать", "Назад", "⬅️", "➡️"]:
-                return
-        
-            # Находим индекс товара по имени
-            for idx, (prod_id, qty, name, price) in enumerate(items):
-                if name == prod_name:
-                    await show_cart_product_card(message, items, idx)
-                    return
-    @dp.message(lambda m: user_state.get(m.from_user.id, {}).get("awaiting_delivery_type"))
-    async def process_delivery_type(message: types.Message):
+
+        await message.answer(
+            "Добавьте комментарий к заказу (если есть):\n"
+            "Например: без лука, позвонить заранее, оставить у двери и т.п.\n"
+            "Можно также указать желаемое время получения.\n\n"
+            "Если комментария нет — нажмите «Без комментария»",
+            reply_markup=kb
+        )
+
+
+    @dp.message(lambda m: user_state.get(m.from_user.id, {}).get("awaiting_comment"))
+    async def process_order_comment(message: types.Message):
         uid = message.from_user.id
-        choice = message.text
-       
-        if choice == "Отмена":
+        comment = message.text.strip()
+
+        if comment == "Отмена":
             user_state.pop(uid, None)
             await show_main_menu(message)
             return
-       
-        if choice == "Доставка курьером":
-            choice = "Доставка"
-        if choice not in ["В зале", "Самовывоз", "Доставка"]:
-            await message.answer("Пожалуйста, выберите один из вариантов ниже:")
-            return
-       
-        # Сохраняем выбранный тип доставки
-        user_state[uid]["delivery_type"] = choice
-        user_state[uid]["temp_order_items"] = user_state.pop(uid, {}).get("temp_order_items", [])
-        user_state[uid]["awaiting_time"] = True  # новое состояние
-        
-        # Клавиатура выбора времени
-        kb = ReplyKeyboardMarkup(keyboard=[
-            [KeyboardButton(text="Как можно скорее")],
-            [KeyboardButton(text="Выбрать время")],
-            [KeyboardButton(text="Отмена")]
-        ], resize_keyboard=True)
-        
-        await message.answer("Когда вам удобно получить заказ?", reply_markup=kb)
+
+        state = user_state[uid]
+        delivery_type = state["delivery_type"]
+        temp_items = state["temp_order_items"]
+
+        # Если "Без комментария" — пустая строка
+        if comment == "Без комментария":
+            comment = ""
+
+        # Сохраняем комментарий
+        state["comment"] = comment
+
+        # Сразу оформляем заказ (без времени)
+        total = sum(qty * price for _, qty, _, price in temp_items)
+        order_id = int(time.time())  # или другой способ генерации ID
+
+        cur.execute("""
+            INSERT INTO orders (id, bot_id, user_id, total, created_at, delivery_type, comment)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (order_id, bot_id, uid, total, order_id, delivery_type, comment))
+        conn.commit()
+
+        # Сохраняем товары в order_items
+        for prod_id, qty, name, price in temp_items:
+            cur.execute("INSERT INTO order_items (order_id, prod_id, name, price, quantity) VALUES (?, ?, ?, ?, ?)",
+                        (order_id, prod_id, name, price, qty))
+        conn.commit()
+
+        # Очищаем корзину
+        cur.execute("DELETE FROM cart WHERE bot_id=? AND user_id=?", (bot_id, uid))
+        conn.commit()
+
+        # Формируем текст для сотрудников
+        items_text = "\n".join([f"• {name} ×{qty} — {price*qty} ₽" for _, qty, name, price in temp_items])
+        full_text = f"""
+    НОВЫЙ ЗАКАЗ №{order_id}
+    Тип: {delivery_type}
+    Сумма: {total} ₽
+    Комментарий клиента: {comment if comment else "нет"}
+    Товары:
+    {items_text}
+    Клиент: {message.from_user.full_name}
+    @{message.from_user.username or 'нет'}
+    ID: {uid}
+        """.strip()
+
+        # Отправляем в чат сотрудников
+        cur.execute("SELECT notify_chat_id FROM bots WHERE bot_id=?", (bot_id,))
+        row = cur.fetchone()
+        chat_id = row[0] if row and row[0] else None
+
+        if chat_id:
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="Принять", callback_data=f"order_accept*{order_id}")],
+                [InlineKeyboardButton(text="Отменить", callback_data=f"order_cancel*{order_id}")]
+            ])
+            try:
+                sent = await bot.send_message(
+                    chat_id=int(chat_id),
+                    text=full_text,
+                    reply_markup=keyboard
+                )
+                cur.execute("UPDATE orders SET cafe_message_id = ? WHERE id = ?", (sent.message_id, order_id))
+                conn.commit()
+            except Exception as e:
+                print(f"Ошибка отправки в кафе: {e}")
+
+        # Ответ клиенту
+        await message.answer(f"Заказ №{order_id} успешно оформлен! ✅\nОжидайте подтверждения от кафе.")
+        await show_main_menu(message)
+
+        # Чистим состояние
+        user_state.pop(uid, None)
+
     # === ВСЕ ОСТАЛЬНЫЕ КНОПКИ (ОБЯЗАТЕЛЬНО!) ===
     @dp.message(lambda m: m.text == "Виртуальная карта")
     async def virtual_card(message: types.Message):
@@ -1038,133 +1091,213 @@ async def launch_bot(bot_id: int, token: str, username: str):
     async def process_order_status(callback: types.CallbackQuery):
         if not callback.message:
             return
+
         data = callback.data
+
         try:
-            if not data.startswith("order_"):
-                await callback.answer("Неверная кнопка")
+            # Убираем префикс
+            payload = data[6:]  # order_
+
+            # ---- ПРАВИЛЬНЫЙ РАЗБОР CALLBACK_DATA ----
+            if "*" not in payload:
+                await callback.answer("Неверный формат кнопки")
                 return
-            parts = data[len("order_"):].split("*")
-            action = parts[0]
-            order_id = int(parts[-1])
-            # Получаем тип доставки и текущий статус
-            cur.execute("SELECT delivery_type, status FROM orders WHERE id = ? AND bot_id = ?", (order_id, bot_id))
+
+            action, order_id_str = payload.split("*", 1)
+
+            try:
+                order_id = int(order_id_str)
+            except ValueError:
+                await callback.answer("Неверный ID заказа")
+                return
+            # ----------------------------------------
+
+            # Загружаем данные заказа
+            cur.execute(
+                "SELECT delivery_type, status FROM orders WHERE id = ? AND bot_id = ?",
+                (order_id, bot_id)
+            )
             row = cur.fetchone()
             if not row:
                 await callback.answer("Заказ не найден")
                 return
+
             delivery_type, current_status = row
             is_delivery = delivery_type == "Доставка"
-            # === Финальная отмена с причиной ===
-            if action == "reason":
-                reason_index = int(parts[1])
-                reasons = ["Товар закончился", "Проблема с доставкой", "Заведение перегружено", "Другое"]
-                reason = reasons[reason_index]
-                cur.execute("UPDATE orders SET status = 'cancelled' WHERE id = ? AND bot_id = ?", (order_id, bot_id))
-                conn.commit()
-                # Уведомление клиенту
-                cur.execute("SELECT user_id FROM orders WHERE id = ?", (order_id,))
-                client_row = cur.fetchone()
-                if client_row:
-                    try:
-                        await bot.send_message(client_row[0], f"Извините, заказ №{order_id} отменён.\nПричина: {reason}\nОплата возвращена. Ждём вас снова!")
-                    except: pass
-                # Уведомление в чат сотрудников
-                cur.execute("""SELECT o.cafe_message_id, b.notify_chat_id, o.total, o.delivery_type
-                            FROM orders o JOIN bots b ON o.bot_id = b.bot_id WHERE o.id = ?""", (order_id,))
-                cafe_row = cur.fetchone()
-                if cafe_row and cafe_row[0] and cafe_row[1]:
-                    try:
-                        items_text = ""
-                        cur.execute("SELECT name, quantity, price FROM order_items WHERE order_id = ?", (order_id,))
-                        for n, q, p in cur.fetchall():
-                            items_text += f"• {n} ×{q} — {p*q} ₽\n"
-                        await bot.edit_message_text(
-                            chat_id=int(cafe_row[1]),
-                            message_id=cafe_row[0],
-                            text=f"Заказ №{order_id} — ОТМЕНЁН СОТРУДНИКОМ\nПричина: {reason}\nТип: {cafe_row[3]} | Сумма: {cafe_row[2]} ₽\n\n{items_text}Сотрудник отменил заказ",
-                            reply_markup=None
+
+            # === 1. Кнопка «Отменить» ===
+            if action == "cancel":
+                kb = InlineKeyboardMarkup(inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="Да, отменить",
+                            callback_data=f"order_cancel_confirm*{order_id}"
                         )
-                    except: pass
-                    try:
-                        await bot.send_message(int(cafe_row[1]), f"ОТМЕНА №{order_id}\nПричина: {reason}")
-                    except: pass
-                new_text = callback.message.text + f"\n\nЗаказ ОТМЕНЁН\nПричина: {reason}❌"
-                await callback.message.edit_text(new_text, reply_markup=None)
-                await callback.answer("Заказ отменён")
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text="Нет, оставить",
+                            callback_data=f"order_cancel_deny*{order_id}"
+                        )
+                    ]
+                ])
+                await callback.message.edit_reply_markup(reply_markup=kb)
+                await callback.answer()
                 return
-            # === Назад из меню причин ===
-            if action == "back":
-                # Генерируем актуальные кнопки
+
+
+            # === 2. Подтверждение отмены → причины ===
+            if action == "cancel_confirm":
+                kb = InlineKeyboardMarkup(inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="Товар закончился",
+                            callback_data=f"order_reason_0*{order_id}"
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text="Проблема с доставкой",
+                            callback_data=f"order_reason_1*{order_id}"
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text="Заведение перегружено",
+                            callback_data=f"order_reason_2*{order_id}"
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text="Другое",
+                            callback_data=f"order_reason_3*{order_id}"
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text="◀ Назад",
+                            callback_data=f"order_back*{order_id}"
+                        )
+                    ]
+                ])
+                await callback.message.edit_reply_markup(reply_markup=kb)
+                await callback.answer()
+                return
+
+
+            # === 3. Отмена отклонена ===
+            if action == "cancel_deny":
                 kb = generate_order_kb(current_status, is_delivery, order_id)
                 await callback.message.edit_reply_markup(reply_markup=kb)
                 await callback.answer()
                 return
-            # === Подтверждение отмены (Да, отменить) ===
-            if action == "cancel" and parts[1] == "confirm":
-                kb = InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="Товар закончился", callback_data=f"order_reason_0*{order_id}")],
-                    [InlineKeyboardButton(text="Проблема с доставкой", callback_data=f"order_reason_1_{order_id}")],
-                    [InlineKeyboardButton(text="Заведение перегружено", callback_data=f"order_reason_2_{order_id}")],
-                    [InlineKeyboardButton(text="Другое", callback_data=f"order_reason_3_{order_id}")],
-                    [InlineKeyboardButton(text="◀ Назад", callback_data=f"order_back_{order_id}")]
-                ])
-                await callback.message.edit_reply_markup(reply_markup=kb)
-                await callback.answer("Выберите причину отмены")
+
+            # === 4. Причина отмены ===
+            if action.startswith("reason_"):
+                try:
+                    reason_index = int(action.split("_")[1])
+                except:
+                    reason_index = 0
+
+                reasons = [
+                    "Товар закончился",
+                    "Проблема с доставкой",
+                    "Заведение перегружено",
+                    "Другое"
+                ]
+                reason = reasons[reason_index % len(reasons)]
+
+                cur.execute(
+                    "UPDATE orders SET status = 'cancelled' WHERE id = ? AND bot_id = ?",
+                    (order_id, bot_id)
+                )
+                conn.commit()
+
+                # Уведомление клиенту
+                cur.execute("SELECT user_id FROM orders WHERE id = ?", (order_id,))
+                row = cur.fetchone()
+                if row:
+                    try:
+                        await bot.send_message(
+                            row[0],
+                            f"Извините, заказ №{order_id} отменён.\nПричина: {reason}"
+                        )
+                    except:
+                        pass
+
+                new_text = callback.message.text + f"\n\n❌ Заказ отменён\nПричина: {reason}"
+                await callback.message.edit_text(new_text, reply_markup=None)
+                await callback.answer("Заказ отменён")
                 return
-            # === Отказ от отмены (Нет, оставить) ===
-            if action == "cancel" and parts[1] == "deny":
-                # Генерируем актуальные кнопки
+
+            # === 5. Назад ===
+            if action == "back":
                 kb = generate_order_kb(current_status, is_delivery, order_id)
                 await callback.message.edit_reply_markup(reply_markup=kb)
-                await callback.answer("Отмена отклонена")
+                await callback.answer()
                 return
-            # === Открытие подтверждения отмены ===
-            if action == "cancel":
-                kb = InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="Да, отменить", callback_data=f"order_cancel_confirm_{order_id}")],
-                    [InlineKeyboardButton(text="Нет, оставить", callback_data=f"order_cancel_deny_{order_id}")]
-                ])
-                await callback.message.edit_reply_markup(reply_markup=kb)
-                await callback.answer("Подтвердите отмену")
-                return
-            # === КНОПКА "ЗАКАЗ ВЫПОЛНЕН" ===
+
+            # === 6. Выполнение заказа ===
             if action == "complete":
-                cur.execute("UPDATE orders SET status = 'completed' WHERE id = ? AND bot_id = ?", (order_id, bot_id))
+                cur.execute(
+                    "UPDATE orders SET status = 'completed' WHERE id = ? AND bot_id = ?",
+                    (order_id, bot_id)
+                )
                 conn.commit()
-                cur.execute("SELECT user_id FROM orders WHERE id = ?", (order_id,))
-                try:
-                    await bot.send_message(cur.fetchone()[0], f"Заказ №{order_id} выполнен!✅\nСпасибо за покупку! Ждём вас снова 😊")
-                except: pass
-                new_text = callback.message.text + "\n\nЗаказ ВЫПОЛНЕН ✅"
+
+                new_text = callback.message.text + "\n\n✅ Заказ выполнен"
                 await callback.message.edit_text(new_text, reply_markup=None)
-                await callback.answer("Заказ завершён")
+                await callback.answer()
                 return
-            # === ОБЫЧНЫЕ ДЕЙСТВИЯ ===
+
+            # === 7. Стандартные статусы ===
             if is_delivery:
-                allowed = {"new": ["accept"], "accepted": ["cooking"], "cooking": ["ontheway"], "ontheway": ["complete"]}
-                status_map = {"accept": ("accepted", "Принят"), "cooking": ("cooking", "Готовится"), "ontheway": ("ontheway", "Курьер в пути"), "complete": ("completed", "Выполнен")}
+                allowed = {
+                    "new": ["accept"],
+                    "accepted": ["cooking"],
+                    "cooking": ["ontheway"],
+                    "ontheway": ["complete"]
+                }
+                status_map = {
+                    "accept": ("accepted", "Принят"),
+                    "cooking": ("cooking", "Готовится"),
+                    "ontheway": ("ontheway", "Курьер в пути"),
+                    "complete": ("completed", "Выполнен")
+                }
             else:
-                allowed = {"new": ["accept"], "accepted": ["cooking"], "cooking": ["ready"], "ready": ["complete"]}
-                status_map = {"accept": ("accepted", "Принят"), "cooking": ("cooking", "Готовится"), "ready": ("ready", "Готов к выдаче"), "complete": ("completed", "Выполнен")}
+                allowed = {
+                    "new": ["accept"],
+                    "accepted": ["cooking"],
+                    "cooking": ["ready"],
+                    "ready": ["complete"]
+                }
+                status_map = {
+                    "accept": ("accepted", "Принят"),
+                    "cooking": ("cooking", "Готовится"),
+                    "ready": ("ready", "Готов к выдаче"),
+                    "complete": ("completed", "Выполнен")
+                }
+
             if action not in allowed.get(current_status, []):
                 await callback.answer("Действие недоступно")
                 return
+
             new_status, text = status_map[action]
-            cur.execute("UPDATE orders SET status = ? WHERE id = ? AND bot_id = ?", (new_status, order_id, bot_id))
+            cur.execute(
+                "UPDATE orders SET status = ? WHERE id = ? AND bot_id = ?",
+                (new_status, order_id, bot_id)
+            )
             conn.commit()
-            # Уведомление клиенту
-            cur.execute("SELECT user_id FROM orders WHERE id = ?", (order_id,))
-            try:
-                await bot.send_message(cur.fetchone()[0], f"Заказ №{order_id}\n{text}")
-            except: pass
-            # Обновляем текст и кнопки
+
             new_text = callback.message.text.split("\n\nСтатус:")[0] + f"\n\nСтатус: {text}"
             kb = generate_order_kb(new_status, is_delivery, order_id)
             await callback.message.edit_text(new_text, reply_markup=kb)
             await callback.answer("Обновлено!")
+
         except Exception as e:
             print("Ошибка в process_order_status:", e)
             await callback.answer("Ошибка обработки", show_alert=True)
+
     # === ЗАПУСК ===
     active_bots[bot_id] = {"bot": bot, "dp": dp}
     asyncio.create_task(dp.start_polling(bot))
