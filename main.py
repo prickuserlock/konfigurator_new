@@ -639,31 +639,68 @@ async def launch_bot(bot_id: int, token: str, username: str):
         state = user_state[uid]
         items = state["items"]
         index = state["cart_item_index"]
-    
+
+        text = (message.text or "").strip()
+
+        # ✅ Назад из карточки в список корзины
+        if text in ["Назад в корзину", "Назад"]:
+            state.pop("cart_item_index", None)
+            await show_cart_full_list_and_keyboard(message, state.get("page", 0))
+            return
+
+        # ✅ Листание товаров в карточке
+        if text == "Предыдущий":
+            index = max(0, index - 1)
+            state["cart_item_index"] = index
+            await show_cart_product_card(message, items, index)
+            return
+
+        if text == "Следующий":
+            index = min(len(items) - 1, index + 1)
+            state["cart_item_index"] = index
+            await show_cart_product_card(message, items, index)
+            return
+
         prod_id = items[index][0]
-    
-        if message.text == "+1":
+
+        # ✅ Изменение количества / удаление
+        if text == "+1":
             items[index] = (prod_id, items[index][1] + 1, items[index][2], items[index][3])
             cur.execute("UPDATE cart SET quantity = quantity + 1 WHERE bot_id=? AND user_id=? AND prod_id=?", (bot_id, uid, prod_id))
-        elif message.text == "-1":
+            conn.commit()
+            await show_cart_product_card(message, items, index)
+            return
+
+        if text == "-1":
             new_qty = max(1, items[index][1] - 1)
             items[index] = (prod_id, new_qty, items[index][2], items[index][3])
             cur.execute("UPDATE cart SET quantity = ? WHERE bot_id=? AND user_id=? AND prod_id=?", (new_qty, bot_id, uid, prod_id))
-        elif message.text == "Удалить":
-            cur.execute("DELETE FROM cart WHERE bot_id=? AND user_id=? AND prod_id=?", (bot_id, uid, prod_id))
-            del items[index]
             conn.commit()
-        
-            if not items:
-                # Корзина стала пустой
-                user_state.pop(uid, None)
-                await message.answer("Корзина очищена!", reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Назад")]], resize_keyboard=True))
-                return
-        
-            # УДАЛЕНИЕ: сразу возвращаемся в список корзины
-            user_state[uid].pop("cart_item_index", None) # выходим из режима карточки
-            await show_cart_full_list_and_keyboard(message, state["page"])
+            await show_cart_product_card(message, items, index)
             return
+
+        if text == "Удалить":
+            cur.execute("DELETE FROM cart WHERE bot_id=? AND user_id=? AND prod_id=?", (bot_id, uid, prod_id))
+            conn.commit()
+            del items[index]
+
+            if not items:
+                user_state.pop(uid, None)
+                await message.answer("Корзина очищена!", reply_markup=ReplyKeyboardMarkup(
+                    keyboard=[[KeyboardButton(text="На главную")]],
+                    resize_keyboard=True
+                ))
+                return
+
+            # если удалили последний элемент — сдвинем индекс
+            index = min(index, len(items) - 1)
+            state["cart_item_index"] = index
+            await show_cart_product_card(message, items, index)
+            return
+
+        # Остальные кнопки игнорируем
+        return
+
     @dp.message(lambda m: user_state.get(m.from_user.id, {}).get("type") == "cart_view" and m.text in ["⬅️", "➡️"])
     async def cart_pagination(message: types.Message):
         uid = message.from_user.id
