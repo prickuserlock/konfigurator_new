@@ -612,24 +612,25 @@ async def launch_bot(bot_id: int, token: str, username: str):
         # Сохраняем индекс для навигации
         user_state[uid]["cart_item_index"] = index
     # Навигация и действия в карточке товара
+    SYSTEM_BTNS = {
+    "⬅️", "➡️", "Назад", "Заказать",
+    "Назад в корзину", "Предыдущий", "Следующий",
+    "+1", "-1", "Удалить", "На главную"
+    }
     @dp.message(lambda m: user_state.get(m.from_user.id, {}).get("type") == "cart_view")
     async def open_cart_item_from_list(message: types.Message):
         uid = message.from_user.id
         state = user_state.get(uid, {})
         items = state.get("items", [])
-
         text = (message.text or "").strip()
 
-        # системные кнопки корзины — их НЕ трогаем
-        if text in ["⬅️", "➡️", "Назад", "Заказать"]:
+        if text in SYSTEM_BTNS:
             return
 
-        # ищем товар по имени
         index = next((i for i, (_, _, name, _) in enumerate(items) if name == text), None)
         if index is None:
-            return  # не товар
+            return
 
-        # переходим в режим карточки
         state["cart_item_index"] = index
         await show_cart_product_card(message, items, index)
 
